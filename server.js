@@ -14,13 +14,16 @@ app.use(express.json());
 const NIM_API_BASE = process.env.NIM_API_BASE || 'https://integrate.api.nvidia.com/v1';
 const NIM_API_KEY = process.env.NIM_API_KEY;
 
-// 🔥 REASONING DISPLAY TOGGLE - Shows/hides reasoning in output
+// 🔥 REASONING DISPLAY TOGGLE
 const SHOW_REASONING = false;
 
-// 🔥 THINKING MODE TOGGLE - Enables thinking for specific models that support it
+// 🔥 THINKING MODE
 const ENABLE_THINKING_MODE = false;
 
-// Model mapping (adjust based on available NIM models)
+// 🔥🔥 NEW: UNLIMITED TOKEN CONSTANT
+const MAX_TOKENS_OVERRIDE = 999999;
+
+// Model mapping
 const MODEL_MAPPING = {
   'gpt-3.5-turbo': 'nvidia/llama-3.1-nemotron-ultra-253b-v1',
   'gpt-4': 'qwen/qwen3-coder-480b-a35b-instruct',
@@ -32,7 +35,7 @@ const MODEL_MAPPING = {
 };
 
 // -----------------------------------------------------
-// 📌 NEW: Root endpoint so "/" no longer returns 404
+// Root endpoint
 // -----------------------------------------------------
 app.get('/', (req, res) => {
   res.send("🚀 NVIDIA NIM Proxy Server is Running!");
@@ -48,7 +51,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-// List models endpoint (OpenAI compatible)
+// List models
 app.get('/v1/models', (req, res) => {
   const models = Object.keys(MODEL_MAPPING).map(model => ({
     id: model,
@@ -63,10 +66,13 @@ app.get('/v1/models', (req, res) => {
   });
 });
 
-// Chat completions endpoint (main proxy)
+// Main proxy
 app.post('/v1/chat/completions', async (req, res) => {
   try {
     const { model, messages, temperature, max_tokens, stream } = req.body;
+
+    // Always override max tokens
+    const finalMaxTokens = MAX_TOKENS_OVERRIDE;
 
     let nimModel = MODEL_MAPPING[model];
     if (!nimModel) {
@@ -100,8 +106,8 @@ app.post('/v1/chat/completions', async (req, res) => {
     const nimRequest = {
       model: nimModel,
       messages: messages,
-      temperature: temperature || 0.6,
-      max_tokens: max_tokens || 9024,
+      temperature: temperature ?? 0.6,
+      max_tokens: finalMaxTokens,  // <<🔥 ALWAYS OVERRIDDEN
       extra_body: ENABLE_THINKING_MODE ? { chat_template_kwargs: { thinking: true } } : undefined,
       stream: stream || false
     };
@@ -114,6 +120,7 @@ app.post('/v1/chat/completions', async (req, res) => {
       responseType: stream ? 'stream' : 'json'
     });
 
+    // Streaming mode
     if (stream) {
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
@@ -179,10 +186,8 @@ app.post('/v1/chat/completions', async (req, res) => {
       });
 
       response.data.on('end', () => res.end());
-      response.data.on('error', (err) => {
-        console.error('Stream error:', err);
-        res.end();
-      });
+      response.data.on('error', () => res.end());
+
     } else {
       const openaiResponse = {
         id: `chatcmpl-${Date.now()}`,
@@ -228,7 +233,7 @@ app.post('/v1/chat/completions', async (req, res) => {
   }
 });
 
-// Catch-all for unsupported endpoints
+// Catch-all
 app.all('*', (req, res) => {
   res.status(404).json({
     error: {
