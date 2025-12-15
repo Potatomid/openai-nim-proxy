@@ -98,7 +98,7 @@ async function callNIM(messages, model, temperature, max_tokens) {
   return response.data;
 }
 
-// Chat completions endpoint
+// Chat completions endpoint with continuation fix
 app.post('/v1/chat/completions', async (req, res) => {
   try {
     const { model, messages, temperature, max_tokens } = req.body;
@@ -136,29 +136,23 @@ RESPONSE REQUIREMENTS (MANDATORY):
       MAX_COMPLETION_TOKENS
     );
 
-    let finalContent = "";
-    let totalTokens = 0;
-    let loopCount = 0;
+    // First request
+    const nimResponse = await callNIM(enforcedMessages, nimModel, temperature, enforcedMaxTokens);
+    let finalContent = nimResponse.choices?.[0]?.message?.content || "";
+    let totalTokens = nimResponse.usage?.completion_tokens || finalContent.split(/\s+/).length;
 
-    // Loop until minimum token requirement is met
-    while (totalTokens < MIN_COMPLETION_TOKENS && loopCount < 10) {
-      const nimResponse = await callNIM(enforcedMessages, nimModel, temperature, enforcedMaxTokens);
+    // If tokens not enough, request continuation once
+    if (totalTokens < MIN_COMPLETION_TOKENS) {
+      const continuationMessages = [
+        ...enforcedMessages,
+        { role: "user", content: "Continue the response in detail until it reaches the minimum immersive length." }
+      ];
 
-      const choice = nimResponse.choices?.[0];
-      const content = choice?.message?.content || "";
+      const continueResponse = await callNIM(continuationMessages, nimModel, temperature, enforcedMaxTokens);
+      const continueContent = continueResponse.choices?.[0]?.message?.content || "";
 
-      finalContent += (finalContent ? "\n\n" : "") + content;
-      totalTokens += nimResponse.usage?.completion_tokens || content.split(/\s+/).length;
-
-      // If tokens not enough, ask model to continue
-      if (totalTokens < MIN_COMPLETION_TOKENS) {
-        enforcedMessages.push({
-          role: "user",
-          content: "Continue the response in detail until it reaches the minimum immersive length."
-        });
-      }
-
-      loopCount++;
+      finalContent += "\n\n" + continueContent;
+      totalTokens += continueResponse.usage?.completion_tokens || continueContent.split(/\s+/).length;
     }
 
     // Build OpenAI-style response
