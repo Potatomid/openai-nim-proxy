@@ -24,8 +24,9 @@ const SHOW_REASONING = false;
 // 🔥 THINKING MODE TOGGLE
 const ENABLE_THINKING_MODE = false;
 
-// 🔒 MINIMUM COMPLETION TOKENS (HARD FLOOR)
+// 🔒 MIN/MAX COMPLETION TOKENS
 const MIN_COMPLETION_TOKENS = 500;
+const MAX_COMPLETION_TOKENS = 10000;
 
 // Model mapping
 const MODEL_MAPPING = {
@@ -49,6 +50,7 @@ app.get('/health', (req, res) => {
     status: 'ok',
     service: 'OpenAI to NVIDIA NIM Proxy',
     min_tokens_enforced: MIN_COMPLETION_TOKENS,
+    max_tokens_enforced: MAX_COMPLETION_TOKENS,
     reasoning_display: SHOW_REASONING,
     thinking_mode: ENABLE_THINKING_MODE
   });
@@ -87,13 +89,13 @@ app.post('/v1/chat/completions', async (req, res) => {
       }
     }
 
-    // 🔒 SYSTEM MESSAGE ENFORCING 500 TOKENS
+    // 🔒 SYSTEM MESSAGE ENFORCING 500 TOKEN MINIMUM
     const enforcedMessages = [
       {
         role: "system",
         content: `
 RESPONSE REQUIREMENTS (MANDATORY):
-- Produce a response of AT LEAST 500 TOKENS.
+- Produce a response of AT LEAST ${MIN_COMPLETION_TOKENS} TOKENS.
 - Do NOT end early.
 - Do NOT summarize to shorten length.
 - Expand naturally and remain relevant until the minimum is met.
@@ -103,10 +105,10 @@ RESPONSE REQUIREMENTS (MANDATORY):
       ...messages
     ];
 
-    // 🔒 Force max_tokens >= 500
-    const enforcedMaxTokens = Math.max(
-      max_tokens || 0,
-      MIN_COMPLETION_TOKENS
+    // 🔒 Force max_tokens within 500–10,000
+    const enforcedMaxTokens = Math.min(
+      Math.max(max_tokens || 0, MIN_COMPLETION_TOKENS),
+      MAX_COMPLETION_TOKENS
     );
 
     const nimRequest = {
@@ -190,5 +192,4 @@ app.all('*', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`🚀 OpenAI → NVIDIA NIM Proxy running on port ${PORT}`);
-  console.log(`🔒 Minimum completion tokens enforced: ${MIN_COMPLETION_TOKENS}`);
-});
+  console.log(`🔒 Min tokens: ${MIN_COMPLETION_TOKENS}, Max tokens: ${MAX_C_
