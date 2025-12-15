@@ -192,4 +192,4 @@ app.all('*', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`🚀 OpenAI → NVIDIA NIM Proxy running on port ${PORT}`);
-  console.log(`🔒 Min tokens: ${MIN_COMPLETION_TOKENS}, Max tokens: ${MAX_C_
+  console.log(`🔒 Min tokens: ${MIN_COMPLETION_TOKENS}, Max tokens: ${10000$`);
