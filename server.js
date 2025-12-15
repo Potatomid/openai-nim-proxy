@@ -6,6 +6,19 @@ const axios = require('axios');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+messages.unshift({
+  role: "system",
+  content: `
+DETAIL REQUIREMENTS (MANDATORY):
+- Describe physical actions, posture, and micro-movements
+- Include internal thoughts or emotional processing
+- Include environmental or sensory details when relevant
+- Avoid summarizing; show events moment-by-moment
+- Responses should feel immersive, not informational
+- Minimum length: 250 tokens
+`
+});
+
 // Prevent 413 Payload Too Large
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
