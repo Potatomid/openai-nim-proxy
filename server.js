@@ -71,37 +71,10 @@ app.get('/v1/models', (req, res) => {
   });
 });
 
-// Helper to call NIM API
-async function callNIM(messages, model, temperature, max_tokens) {
-  const nimRequest = {
-    model,
-    messages,
-    temperature: temperature || 1,
-    max_tokens: max_tokens,
-    extra_body: ENABLE_THINKING_MODE
-      ? { chat_template_kwargs: { thinking: true } }
-      : undefined,
-    stream: false
-  };
-
-  const response = await axios.post(
-    `${NIM_API_BASE}/chat/completions`,
-    nimRequest,
-    {
-      headers: {
-        'Authorization': `Bearer ${NIM_API_KEY}`,
-        'Content-Type': 'application/json'
-      }
-    }
-  );
-
-  return response.data;
-}
-
 // Chat completions endpoint
 app.post('/v1/chat/completions', async (req, res) => {
   try {
-    const { model, messages, temperature, max_tokens } = req.body;
+    const { model, messages, temperature, max_tokens, stream } = req.body;
 
     let nimModel = MODEL_MAPPING[model];
 
@@ -116,71 +89,79 @@ app.post('/v1/chat/completions', async (req, res) => {
       }
     }
 
-    // Initial system message for immersive responses
+    // 🔒 SYSTEM MESSAGE ENFORCING 500 TOKEN MINIMUM
     const enforcedMessages = [
       {
         role: "system",
         content: `
 RESPONSE REQUIREMENTS (MANDATORY):
 - Produce a response of AT LEAST ${MIN_COMPLETION_TOKENS} TOKENS.
-- Include rich sensory details, physical actions, posture, micro-movements, internal thoughts, and emotions.
-- Never summarize or stop early.
-- If content seems complete, continue elaborating naturally until minimum token count is reached.
+- Do NOT end early.
+- Do NOT summarize to shorten length.
+- Expand naturally and remain relevant until the minimum is met.
+- If content is complete early, continue elaboration.
 `
       },
       ...messages
     ];
 
+    // 🔒 Force max_tokens within 500–10,000
     const enforcedMaxTokens = Math.min(
       Math.max(max_tokens || 0, MIN_COMPLETION_TOKENS),
       MAX_COMPLETION_TOKENS
     );
 
-    let finalContent = "";
-    let totalTokens = 0;
-    let loopCount = 0;
+    const nimRequest = {
+      model: nimModel,
+      messages: enforcedMessages,
+      temperature: temperature || 1,
+      max_tokens: enforcedMaxTokens,
+      extra_body: ENABLE_THINKING_MODE
+        ? { chat_template_kwargs: { thinking: true } }
+        : undefined,
+      stream: stream || false
+    };
 
-    // Loop until minimum token requirement is met
-    while (totalTokens < MIN_COMPLETION_TOKENS && loopCount < 10) {
-      const nimResponse = await callNIM(enforcedMessages, nimModel, temperature, enforcedMaxTokens);
-
-      const choice = nimResponse.choices?.[0];
-      const content = choice?.message?.content || "";
-
-      finalContent += (finalContent ? "\n\n" : "") + content;
-      totalTokens += nimResponse.usage?.completion_tokens || content.split(/\s+/).length;
-
-      // If tokens not enough, ask model to continue
-      if (totalTokens < MIN_COMPLETION_TOKENS) {
-        enforcedMessages.push({
-          role: "user",
-          content: "Continue the response in detail until it reaches the minimum immersive length."
-        });
+    const response = await axios.post(
+      `${NIM_API_BASE}/chat/completions`,
+      nimRequest,
+      {
+        headers: {
+          'Authorization': `Bearer ${NIM_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        responseType: stream ? 'stream' : 'json'
       }
+    );
 
-      loopCount++;
+    // STREAMING MODE
+    if (stream) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+
+      response.data.pipe(res);
+      return;
     }
 
-    // Build OpenAI-style response
+    // NON-STREAM RESPONSE
     const openaiResponse = {
       id: `chatcmpl-${Date.now()}`,
       object: 'chat.completion',
       created: Math.floor(Date.now() / 1000),
       model: model,
-      choices: [
-        {
-          index: 0,
-          message: {
-            role: "assistant",
-            content: finalContent
-          },
-          finish_reason: "stop"
-        }
-      ],
-      usage: {
+      choices: response.data.choices.map(choice => ({
+        index: choice.index,
+        message: {
+          role: choice.message.role,
+          content: choice.message.content || ''
+        },
+        finish_reason: choice.finish_reason
+      })),
+      usage: response.data.usage || {
         prompt_tokens: 0,
-        completion_tokens: totalTokens,
-        total_tokens: totalTokens
+        completion_tokens: 0,
+        total_tokens: 0
       }
     };
 
