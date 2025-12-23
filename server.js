@@ -57,7 +57,7 @@ const SHOW_REASONING = false;
 const ENABLE_THINKING_MODE = false;
 
 const MIN_COMPLETION_TOKENS = 500;
-const MAX_COMPLETION_TOKENS = 10000;
+const MAX_COMPLETION_TOKENS = 1000;
 
 /* =========================
    MODEL MAP
