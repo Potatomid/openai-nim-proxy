@@ -1,4 +1,4 @@
-// server.js - OpenAI to NVIDIA NIM API Proxy (STABLE VERSION)
+// server.js - NVIDIA NIM Proxy optimized for Janitor AI
 
 const express = require('express');
 const cors = require('cors');
@@ -13,20 +13,17 @@ const PORT = process.env.PORT || 3000;
    NETWORK STABILITY FIXES
 ========================= */
 
-// Keep-alive agents (prevents Failed to fetch)
 const httpAgent = new http.Agent({ keepAlive: true });
 const httpsAgent = new https.Agent({ keepAlive: true });
 
-// Axios instance with timeout + keepalive
 const nimAxios = axios.create({
-  timeout: 120000, // ⏱️ 120 seconds
+  timeout: 60000, // 60 seconds
   httpAgent,
   httpsAgent,
   maxContentLength: 50 * 1024 * 1024,
   maxBodyLength: 50 * 1024 * 1024
 });
 
-// Simple retry wrapper
 async function axiosWithRetry(fn, retries = 2) {
   try {
     return await fn();
@@ -53,11 +50,8 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 const NIM_API_BASE = process.env.NIM_API_BASE || 'https://integrate.api.nvidia.com/v1';
 const NIM_API_KEY = process.env.NIM_API_KEY;
 
-const SHOW_REASONING = false;
-const ENABLE_THINKING_MODE = false;
-
-const MIN_COMPLETION_TOKENS = 500;
-const MAX_COMPLETION_TOKENS = 1000;
+const MIN_COMPLETION_TOKENS = 1;
+const MAX_COMPLETION_TOKENS = 2048;
 
 /* =========================
    MODEL MAP
@@ -107,19 +101,21 @@ app.get('/v1/models', (req, res) => {
 
 app.post('/v1/chat/completions', async (req, res) => {
   try {
-    const { model, messages, temperature, max_tokens, stream } = req.body;
+    const { model, messages, temperature, max_tokens } = req.body;
 
-    let nimModel = MODEL_MAPPING[model] || 'meta/llama-3.1-70b-instruct';
+    const nimModel = MODEL_MAPPING[model] || 'meta/llama-3.1-70b-instruct';
 
+    // Inject descriptive system prompt for immersive outputs
     const enforcedMessages = [
       {
         role: "system",
         content: `
-RESPONSE REQUIREMENTS (MANDATORY):
-- MINIMUM ${MIN_COMPLETION_TOKENS} TOKENS
-- DO NOT END EARLY
-- CONTINUE NATURALLY IF FINISHED
-- EXPAND IMMERSIVELY
+You are a creative narrator. Your responses must be immersive and richly descriptive:
+- Include hair movement, gestures, posture, micro-expressions
+- Show environmental interactions and sensory details
+- Include internal thoughts subtly
+- Describe moment-to-moment actions naturally
+- Maintain clarity and readability
 `
       },
       ...messages
@@ -135,10 +131,7 @@ RESPONSE REQUIREMENTS (MANDATORY):
       messages: enforcedMessages,
       temperature: temperature ?? 1,
       max_tokens: enforcedMaxTokens,
-      stream: !!stream,
-      extra_body: ENABLE_THINKING_MODE
-        ? { chat_template_kwargs: { thinking: true } }
-        : undefined
+      stream: false, // Janitor AI does not support streaming
     };
 
     const response = await axiosWithRetry(() =>
@@ -150,7 +143,7 @@ RESPONSE REQUIREMENTS (MANDATORY):
             Authorization: `Bearer ${NIM_API_KEY}`,
             'Content-Type': 'application/json'
           },
-          responseType: stream ? 'stream' : 'json'
+          responseType: 'json'
         }
       )
     );
@@ -159,21 +152,32 @@ RESPONSE REQUIREMENTS (MANDATORY):
       throw new Error('NIM returned no data');
     }
 
-    if (stream) {
-      res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Connection', 'keep-alive');
-      response.data.pipe(res);
-      return;
-    }
+    // Normalize output to OpenAI response format
+    const text =
+      response.data.choices?.[0]?.message?.content ||
+      response.data.output_text ||
+      " ";
 
     res.json({
       id: `chatcmpl-${Date.now()}`,
       object: 'chat.completion',
       created: Math.floor(Date.now() / 1000),
       model,
-      choices: response.data.choices,
-      usage: response.data.usage
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: "assistant",
+            content: text
+          },
+          finish_reason: "stop"
+        }
+      ],
+      usage: response.data.usage || {
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0
+      }
     });
 
   } catch (error) {
