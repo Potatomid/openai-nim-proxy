@@ -17,7 +17,7 @@ const httpAgent = new http.Agent({ keepAlive: true });
 const httpsAgent = new https.Agent({ keepAlive: true });
 
 const nimAxios = axios.create({
-  timeout: 60000, // 60 seconds
+  timeout: 60000,
   httpAgent,
   httpsAgent,
   maxContentLength: 50 * 1024 * 1024,
@@ -99,17 +99,22 @@ app.get('/v1/models', (req, res) => {
    CHAT COMPLETIONS
 ========================= */
 
-app.post('/v1/chat/completions', async (req, res) => {
+// ✅ Janitor AI compatibility: support BOTH routes
+app.post(['/v1/chat/completions', '/chat/completions'], async (req, res) => {
   try {
-    const { model, messages, temperature, max_tokens } = req.body;
+    const { model, messages = [], temperature, max_tokens } = req.body;
 
     const nimModel = MODEL_MAPPING[model] || 'meta/llama-3.1-70b-instruct';
 
-    // Inject descriptive system prompt for immersive outputs
-    const enforcedMessages = [
-      {
-        role: "system",
-        content: `
+    // ✅ Only inject system prompt if Janitor didn't already provide one
+    const hasSystem = messages.some(m => m.role === 'system');
+
+    const enforcedMessages = hasSystem
+      ? messages
+      : [
+          {
+            role: "system",
+            content: `
 You are a creative narrator. Your responses must be immersive and richly descriptive:
 - Include hair movement, gestures, posture, micro-expressions
 - Show environmental interactions and sensory details
@@ -117,9 +122,9 @@ You are a creative narrator. Your responses must be immersive and richly descrip
 - Describe moment-to-moment actions naturally
 - Maintain clarity and readability
 `
-      },
-      ...messages
-    ];
+          },
+          ...messages
+        ];
 
     const enforcedMaxTokens = Math.min(
       Math.max(max_tokens || MIN_COMPLETION_TOKENS, MIN_COMPLETION_TOKENS),
@@ -131,7 +136,7 @@ You are a creative narrator. Your responses must be immersive and richly descrip
       messages: enforcedMessages,
       temperature: temperature ?? 1,
       max_tokens: enforcedMaxTokens,
-      stream: false, // Janitor AI does not support streaming
+      stream: false
     };
 
     const response = await axiosWithRetry(() =>
@@ -142,27 +147,23 @@ You are a creative narrator. Your responses must be immersive and richly descrip
           headers: {
             Authorization: `Bearer ${NIM_API_KEY}`,
             'Content-Type': 'application/json'
-          },
-          responseType: 'json'
+          }
         }
       )
     );
 
-    if (!response || !response.data) {
-      throw new Error('NIM returned no data');
-    }
-
-    // Normalize output to OpenAI response format
     const text =
-      response.data.choices?.[0]?.message?.content ||
-      response.data.output_text ||
+      response.data?.choices?.[0]?.message?.content ||
+      response.data?.output_text ||
       " ";
 
+    // ✅ Strict OpenAI-compatible response
     res.json({
       id: `chatcmpl-${Date.now()}`,
       object: 'chat.completion',
       created: Math.floor(Date.now() / 1000),
       model,
+      system_fingerprint: "nim-proxy",
       choices: [
         {
           index: 0,
@@ -170,10 +171,11 @@ You are a creative narrator. Your responses must be immersive and richly descrip
             role: "assistant",
             content: text
           },
+          logprobs: null,
           finish_reason: "stop"
         }
       ],
-      usage: response.data.usage || {
+      usage: response.data?.usage ?? {
         prompt_tokens: 0,
         completion_tokens: 0,
         total_tokens: 0
@@ -203,5 +205,4 @@ You are a creative narrator. Your responses must be immersive and richly descrip
 
 app.listen(PORT, () => {
   console.log(`🚀 Proxy running on port ${PORT}`);
-  console.log(`🔒 Tokens: ${MIN_COMPLETION_TOKENS} → ${MAX_COMPLETION_TOKENS}`);
 });
